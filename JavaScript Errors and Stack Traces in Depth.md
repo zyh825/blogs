@@ -96,8 +96,8 @@ Trace
 `Error.prototype` 对象通常包含下面属性：
 
 -  `constructor` - 构造函数负责这个实例的原型。
-- `message` - 一条错误信息。
-- `name` - 错误的名称
+-  `message` - 一条错误信息。
+-  `name` - 错误的名称
 
 上述这些是标准的属性，有些时候不同的环境会有它们自己特定参数。在一些环境下，比如 Node, Firefox, Chrome, Edge, IE 10+, Opera 和 Safari 6+，我们甚至会有 `stack` 参数，它包含了一个错误的堆栈追踪信息。
 
