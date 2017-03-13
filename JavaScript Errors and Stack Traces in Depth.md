@@ -4,7 +4,7 @@ date: 2017-03-06
 tags: ["JavaScript", "translation"]
 ---
 
-原文地址：http://lucasfcosta.com/2017/02/17/JavaScript-Errors-and-Stack-Traces.html?utm_source=javascriptweekly&utm_medium=email
+原文地址：http://lucasfcosta.com/2017/02/17/JavaScript-Errors-and-Stack-Traces.html
 
 (｡･∀･)ﾉﾞ嗨，大家好！鉴于我几个星期没有写些什么关于JavaScript的东西了，是时候让我们回到正轨了。
 
@@ -78,7 +78,7 @@ Trace
     at c (repl:3:9)
     at b (repl:3:1)
     at a (repl:3:1)
-    at repl:1:1 // <-- For now feel free to ignore anything below this point, these are Node's internals
+    at repl:1:1 // <-- 这个指针下面的东西都是Nodejs的内部实现，无视就好
     at realRunInThisContextScript (vm.js:22:35)
     at sigintHandlersWrap (vm.js:98:12)
     at ContextifyScript.Script.runInThisContext (vm.js:24:12)
@@ -122,7 +122,7 @@ Try表达式能够签到在其他的 `try` 表达式内，比如：
 ```javascript
 try {
     try {
-        throw new Error('Nested error.'); // The error thrown here will be caught by its own `catch` clause
+        throw new Error('Nested error.'); // 这里抛出的错误会被他自身的catch子句所捕获
     } catch (nestedErr) {
         console.log('Nested catch'); // This runs
     }
@@ -199,4 +199,169 @@ runWithoutThrowing(funcThatThrowsString);
 ```
 
 现在你的第二行 `console.log` 将告诉你 error 的 message 是 `undefined` 。这看起来在当前似乎不是很重要，不过如果你需要确认`Error` 对象内存在的一个特定的属性后者需要从用一种方法上处理 `Error ` 特定属性时（比如  [Chai’s`throws` 断言文档](https://github.com/chaijs/chai/blob/a7e1200db4c144263599e5dd7a3f7d1893467160/lib/chai/core/assertions.js#L1506)），你需要做更多的工作。
+
+同样的，当抛出值不是 `Error`  对象时，你不需要去访问其他重要的数据，比如它的`stack`，一个在一些环境中 `Error` 对象所包含的字段。
+
+错误同样可以被当作其他（一般）的对象来使用，你并不一定要把他们抛出。这就是为什么它们经常被当初回调函数的第一个参数的原因。比如，在 `fs.readdir` 方法种：
+
+```javascript
+const fs = require('fs');
+
+fs.readdir('/example/i-do-not-exist', function callback(err, dirs) {
+  if (err instanceof Error) {
+    // `readdir` 将会抛出一个错误，因为这个文件根本不存在    
+    // 现在我们能够使用回调函数中的错误对象了
+    console.log('Error Message:' + err.message);
+    console.log('See? We can use Errors without using try statements.');
+  } else {
+    console.log(dirs);
+  }
+})
+```
+
+最后但并非不重要， `Error` 对象在 promise  reject 时被使用。这使得控制promise的rejections变得容易：
+
+```javascript
+new Promise(function(resolve, reject) {
+  reject(new Error('The promise was rejected.'));
+}).then(function() {
+  console.log('I am an error.');
+}).catch(function(err) {
+  if (err instanceof Error) {
+    console.log('The promise was rejected with an error.');
+    console.log('Error Message:' + err.message);
+  }
+})
+```
+
+### 操作堆栈追踪
+
+现在就是你所期待的部分了：如何去操作堆栈追踪信息。
+
+这个章节只针对一些支持 `Error.captureStackTrace` 的特殊环境，比如 NodeJS。
+
+这个 `Error.captureStackTrace` 方法将一个 `object` 作为它的一个参数，一个可选的 `function` 作为它的第二个参数。这个 captureStackTrace 做的呢就是捕获当前的堆栈信息（废话）并且在一个大的对象中创建一个 `stack` 参数来保存它。如果提供了第二个参数，这个被传递的方法将会被认为是调用堆栈的重点。因此堆栈跟踪将仅显示在调用此函数之前发生的调用。
+
+让我们给一些例子来让这一切变得更清晰。首先，我们将会捕获当前的堆栈信息，并且将它保存在一个普通的对象中。
+
+```javascript
+const myObj = {};
+
+function c() {
+  
+}
+
+function b() { 
+  // 这里将会讲当前的堆栈信息储存到 myObj 中
+  Error.captureStackTrace(myObj);
+  c();
+}
+
+function a() {
+  b();
+}
+
+// 首先我们会调用这些方法
+a();
+
+// 现在让我们看看什么堆栈信息被存入了 myObj.stack
+console.log(myObj.stack);
+
+// 这将会在控制台中打印出如下信息：
+//    at b (repl:3:7) <-- 因为它在B内被调用，所以B是堆栈中的最后一个条目
+//    at a (repl:2:1)
+//    at repl:1:1 <-- 下面是 node 的内部实现
+//    at realRunInThisContextScript (vm.js:22:35)
+//    at sigintHandlersWrap (vm.js:98:12)
+//    at ContextifyScript.Script.runInThisContext (vm.js:24:12)
+//    at REPLServer.defaultEval (repl.js:313:29)
+//    at bound (domain.js:280:14)
+//    at REPLServer.runBound [as eval] (domain.js:293:12)
+//    at REPLServer.onLine (repl.js:513:10)
+```
+
+正如你在上述例子中看到的，我们首先调用了 `a` （被压入了栈内）然后在 `a` 内调用了 `b` （被 push 在 `a` 上面）。然后，在 `b` 内，我们捕获到了当前的堆栈信息，并且存入了 `myObj`。 这就是为什么我们在控制台中只获得了 `a` 和 `b`。 
+
+现在，让我们传递一个方法作为第二个参数给`Error.captureStackTrace` 方法，来看会发生什么：
+
+```javascript
+const myObj = {};
+
+function d() {
+  // 这里我们将会储存当前的堆栈信息到 myObj 中
+  // 这一次我么将会隐藏 `b` 之后以及它自身的栈帧 
+  Error.captureStackTrace(myObj, b);
+}
+
+function c() {
+  d(); 
+}
+
+function b() {
+  c();  
+}
+
+function a() {
+  b();
+}
+
+// 首先我们会调用这些方法
+a();
+
+// 现在让我们看看什么堆栈信息被存入了 myObj.stack
+console.log(myObj.stack);
+
+// 这将会在控制台中打印出如下信息：
+//    at a (repl:2:1) <-- 如你所见在这里我们只能获得 `b` 之前的被调用的栈帧
+//    at repl:1:1 <-- 下面是 node 的内部实现
+//    at realRunInThisContextScript (vm.js:22:35)
+//    at sigintHandlersWrap (vm.js:98:12)
+//    at ContextifyScript.Script.runInThisContext (vm.js:24:12)
+//    at REPLServer.defaultEval (repl.js:313:29)
+//    at bound (domain.js:280:14)
+//    at REPLServer.runBound [as eval] (domain.js:293:12)
+//    at REPLServer.onLine (repl.js:513:10)
+//    at emitOne (events.js:101:20)
+```
+
+当我们传递 `b` 给`Error.captureStackTrace` 函数时，它隐藏了 `b` 本身以及在它之上的所有栈帧。这就是为什么我们在堆栈追踪中只看到了`a`。
+
+现在你或许会问你自己： “为什么这东西有用？”。这个东西在当你试图对非你的用户隐藏内部实现细节时非常有用。在 Chai 内，举个例子， 们使用它来避免向我们的用户显示与我们实现检查和断言自身的方式无关的细节。
+
+### 真实环境中的堆栈追踪操作
+
+正如我在上一个小节提到的，Chai 使用堆栈操作技术来使得堆栈追踪与我们的用户（的操作）更加关联。下面是我们如何做的。
+
+首先，让我们看一看当断言失败时， `AssertionError` 构造函数会抛出什么：
+
+```javascript
+// `ssfi` 代表 “start stack function”. 它指向堆栈追踪中删除不相关帧的起点
+function AssertionError (message, _props, ssf) {
+  var extend = exclude('name', 'message', 'stack', 'constructor', 'toJSON')
+    , props = extend(_props || {});
+  
+  // 默认值
+  this.message = message || 'Unspecified AssertionError';
+  this.showDiff = false;
+  
+  // 从参数中拷贝
+  for (var key in props) {
+    this[key] = props[key];
+  }
+  
+  // 这里就是与我们相关的部分：
+  // 如果一个start stack function 被提供了，我们捕获了当前堆栈的追踪信息，并且将其传递给了 `captureStackTrace` 方法，那样我们移除在这个之后的栈帧了。
+  ssf = ssf || arguments.callee;
+  if (ssf && Error.captureStackTrace) {
+    Error.captureStackTrace(this, ssf);
+  } else {
+    // 如果没有提供 start stack function 我们就用原来的 stack 属性。
+    try {
+      throw new Error();
+    } catch(e) {
+      this.stack = e.stack;
+    }
+  }
+}
+```
 
