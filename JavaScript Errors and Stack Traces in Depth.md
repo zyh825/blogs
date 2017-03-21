@@ -365,3 +365,90 @@ function AssertionError (message, _props, ssf) {
 }
 ```
 
+如你所见，在上面的代码中我们使用 `Error.captureStackTrace` 来捕获堆栈信息，并且将其储存在我们所生成的 `AssertionError` 实例中，（当它存在时）我们传递了一个 start stack function 给它来将不相干的栈帧从栈列内移除。这些仅仅展示了Chai的内部实现细节并且在最后污染了栈列。
+
+现在让我们看看现在由 [@meeber](https://github.com/meeber)在 [这个碉堡的PR内](https://github.com/chaijs/chai/pull/922)的代码是怎么写的.
+
+在我们看下面的代码之前，我必须告诉你 `addChainableMethod` 方法做了什么。它将传递给它的可链接方法添加到断言，并且还使用包含断言的方法标记断言本身。它以 `ssfi` 作为名称保存（代表了起始栈方法指示器）。这基本上意味着当前断言将是堆栈中的最后一帧，因此我们不会在堆栈中显示Chai中的任何进一步的内部方法。我避免添加整个代码，因为它有很多东西，而且有点棘手，但如果你想读它，[这里是它的链接](https://github.com/meeber/chai/blob/42ff3c012b8a5978e7381b17d712521299ced341/lib/chai/utils/addChainableMethod.js).。
+
+在下面的代码中，我们有一个 `lengthOf` 断言的逻辑，它检查对象是否具有一个明确的 `长度`。我们希望我们的用户像这么用它：`expect(['foo', 'bar']).to.have.lengthOf(2)`
+
+```javascript
+function assertLength (n, msg) {
+    if (msg) flag(this, 'message', msg);
+    var obj = flag(this, 'object')
+        , ssfi = flag(this, 'ssfi');
+
+    // 注意这一行
+    new Assertion(obj, msg, ssfi, true).to.have.property('length');
+    var len = obj.length;
+
+    // 这一行也同样相关
+    this.assert(
+            len == n
+        , 'expected #{this} to have a length of #{exp} but got #{act}'
+        , 'expected #{this} to not have a length of #{act}'
+        , n
+        , len
+    );
+}
+
+Assertion.addChainableMethod('lengthOf', assertLength, assertLengthChain);
+```
+
+在上面的代码中，我突出强调了与我们现在相关的代码段。我们先来看看 `this.assert` 的调用。
+
+下面是 `this.assert` 方法的代码：
+
+```javascript
+Assertion.prototype.assert = function (expr, msg, negateMsg, expected, _actual, showDiff) {
+    var ok = util.test(this, arguments);
+    if (false !== showDiff) showDiff = true;
+    if (undefined === expected && undefined === _actual) showDiff = false;
+    if (true !== config.showDiff) showDiff = false;
+
+    if (!ok) {
+        msg = util.getMessage(this, arguments);
+        var actual = util.getActual(this, arguments);
+
+        // 这里是我们所要关注的行
+        throw new AssertionError(msg, {
+                actual: actual
+            , expected: expected
+            , showDiff: showDiff
+        }, (config.includeStack) ? this.assert : flag(this, 'ssfi'));
+    }
+};
+```
+
+基本上，`assert`方法负责检查是否通过了布尔表达式的断言。如果没有，我们必须实例化一个`AssertionError`。请注意，当实例化这个新的`AssertionError`时，我们也向其传递一个堆栈跟踪功能指示符（`ssfi`）。如果配置标志`includeStack`被打开，我们通过将`this.assert`本身传递给它来显示整个堆栈跟踪，这真的是堆栈中的最后一帧。但是，如果`includeStack`配置标志被启用，我们必须从堆栈跟踪中隐藏更多的内部实现细节，所以我们使用什么存储到`ssfi`标志。
+
+现在，我们来谈谈另一个相关的行：
+
+```javascript
+new Assertion(obj, msg, ssfi, true).to.have.property('length');
+```
+
+正如你可以看到的，我们在创建我们的嵌套断言时传递了我们从`ssfi`标志获得的内容。这意味着当创建新的断言时，它将使用此函数作为从堆栈跟踪中删除无用框架的起点。顺便说一下，这是`Assertion`构造函数：
+
+```javascript
+function Assertion (obj, msg, ssfi, lockSsfi) {
+    // This is the line that matters to us
+    flag(this, 'ssfi', ssfi || Assertion);
+    flag(this, 'lockSsfi', lockSsfi);
+    flag(this, 'object', obj);
+    flag(this, 'message', msg);
+
+    return util.proxify(this);
+}
+```
+
+你可以记住从我对`addChainableMethod`的说法，它设置`ssfi`标志与自己的包装方法，这意味着这是堆栈跟踪中最低的内部帧，所以我们可以删除所有上面的帧。
+
+通过将`ssfi`传递给嵌套断言，它只检查我们的对象是否具有属性长度，我们避免重置我们将用作起点指示符的帧，然后在堆栈中使得之前的`addChainableMethod`保持可见。
+
+这可能看起来有点复杂，所以让我们回顾一下Chai发生的事情，我们想从堆栈中删除无用的帧：
+
+1. 当我们运行断言时，我们设置自己的方法作为删除堆栈中的下一个帧的参考
+2. 断言运行，如果它失败，我们删除我们存储的引用后的所有内部帧
+3. 如果我们有嵌套断言，我们仍然必须使用当前的断言包装方法作为删除堆栈中的下一个帧的参考点，所以我们将当前的`ssfi`（启动堆栈函数指示符）传递给我们正在创建的断言，以便它可以保留它
