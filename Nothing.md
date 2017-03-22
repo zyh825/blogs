@@ -1,5 +1,5 @@
 ---
-title: nothing 
+title: 一些需要思考的事情
 date: 2017-03-22 
 tags: ['life']
 ---
