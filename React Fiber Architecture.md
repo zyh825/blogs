@@ -8,7 +8,7 @@ tags: ["react", "translation"]
 
 ## 引言
 
-React Fiber 是一个正在重新实现的React核心算法，它是过去两年react团队的研究的顶峰。
+React Fiber 是一个正在进行的的React核心算法的重新实现，它是过去两年react团队的研究的顶峰。
 
 React Fiber 的目标是为了增强react在动画，布局和手势等领域的适应性，它的头号特性就是增量渲染：一种将渲染任务切割成多个小块并分布到复数个帧中。
 
